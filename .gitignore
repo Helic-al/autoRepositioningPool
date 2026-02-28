@@ -1,0 +1,22 @@
+.env
+logs
+
+# python
+__pycache__/
+venv
+.env
+.venv/
+bot_log.log
+
+
+# Foundry
+out/
+cache/
+broadcast/
+.env
+
+# IDE/OS
+.vscode/
+.idea/
+.DS_Store
+
