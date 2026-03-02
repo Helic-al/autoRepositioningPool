@@ -1,0 +1,226 @@
+import datetime
+import math
+import os
+import subprocess
+
+from logger import setup_logger
+
+
+class PoolRepositioner:
+    def __init__(
+        self,
+        inManager,
+        inHookAddress,
+        inLiquidity,
+        inTickLower,
+        inTickUpper,
+        inPrivateKey,
+    ):
+        """
+        inManager: プールマネージャアドレス
+        inHookAddress: フックアドレス
+        inRangeWidth: レンジ幅、入力した割合が上下レンジに設定される
+        """
+        self.manager = inManager
+        self.hookAddress = inHookAddress
+        self.liquidity = inLiquidity
+        self.tickLower = inTickLower
+        self.tickUpper = inTickUpper
+        self.privateKey = inPrivateKey
+        self.log = setup_logger("PoolReposition.log")
+
+    def commandExecuter(self, inCommand, inEnv_vars):
+        """
+        inCommandを実行する関数
+        return (boolean, cmdResult)
+        """
+
+        try:
+            result = subprocess.run(
+                inCommand,
+                cwd="../solidityHook",
+                capture_output=True,
+                text=True,
+                check=True,
+                env=inEnv_vars,
+            )
+
+            # ==========================================
+            # 💡 ここを追加：実行結果をテキストファイルに追記(Append)保存
+            # ==========================================
+            with open("reposition_history.log", "a", encoding="utf-8") as f:
+                now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"=== Reposition Executed: {now} ===\n")
+                f.write(result.stdout)
+                f.write("\n\n")
+
+            self.log.info("✅ Reposition Success! Log saved to reposition_history.log")
+            return (True, result.stdout)
+
+        except subprocess.CalledProcessError as e:
+            with open("reposition_history.log", "a", encoding="utf-8") as f:
+                now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"=== ❌ ERROR: {now} ===\n")
+                f.write("--- 📜 STDOUT (console.logなどの詳細トレース) ---\n")
+                f.write(e.stdout if e.stdout else "None")
+                f.write(e.stderr)
+                f.write("\n\n")
+
+            self.log.error(f"❌ Reposition Failed:\n{e.stderr}")
+            return (False, e.stderr)
+
+    def calcNewTick(self, currentPrice):
+        """_summary_
+            currentPrice に基づいてレンジを計算
+
+        Returns:
+            return (newTickLower, newTickUpper)
+        """
+        tickSpacing = 60
+        currentTick = int(math.log(currentPrice / 1e12, 1.0001))
+
+        halfWidthTicks = 300  # 3.0%
+
+        newTickLower = currentTick - halfWidthTicks
+        newTickUpper = currentTick + halfWidthTicks
+
+        newTickLower = (newTickLower // tickSpacing) * tickSpacing
+        newTickUpper = (newTickUpper // tickSpacing) * tickSpacing
+
+        return (newTickLower, newTickUpper)
+
+    def calc_approx_swap_amount(
+        self, current_price, current_tick, wallet_weth_wei=0, wallet_usdc_raw=0
+    ):
+        """
+        リポジション時の理想的なスワップ量（概算）と方向を計算する
+        """
+
+        # 1. TickからSqrtPriceX96を計算する内部関数
+        def tick_to_sqrt_price_x96(tick):
+            return int(math.sqrt(1.0001**tick) * (2**96))
+
+        sqrt_p_x96 = tick_to_sqrt_price_x96(current_tick)
+        sqrt_p_a_x96 = tick_to_sqrt_price_x96(self.tickLower)
+        sqrt_p_b_x96 = tick_to_sqrt_price_x96(self.tickUpper)
+
+        # 2. 古いポジションから戻ってくるトークン量を推定 (Uniswap V3 Math)
+        amount0_withdrawn = 0  # WETH (Wei)
+        amount1_withdrawn = 0  # USDC (Raw)
+
+        if sqrt_p_x96 <= sqrt_p_a_x96:
+            amount0_withdrawn = (
+                self.liquidity
+                * ((sqrt_p_b_x96 - sqrt_p_a_x96) * (2**96))
+                // (sqrt_p_b_x96 * sqrt_p_a_x96)
+            )
+        elif sqrt_p_x96 < sqrt_p_b_x96:
+            amount0_withdrawn = (
+                self.liquidity
+                * ((sqrt_p_b_x96 - sqrt_p_x96) * (2**96))
+                // (sqrt_p_b_x96 * sqrt_p_x96)
+            )
+            amount1_withdrawn = self.liquidity * (sqrt_p_x96 - sqrt_p_a_x96) // (2**96)
+        else:
+            amount1_withdrawn = (
+                self.liquidity * (sqrt_p_b_x96 - sqrt_p_a_x96) // (2**96)
+            )
+
+        # 3. リポジション時の手持ち総資金（Wallet残高 + 引き出し額）
+        total_weth_wei = wallet_weth_wei + amount0_withdrawn
+        total_usdc_raw = wallet_usdc_raw + amount1_withdrawn
+
+        # 4. 現在の価格ベースでドル（USDC）換算の価値を出す
+        weth_value_in_usdc = (total_weth_wei / 1e18) * current_price
+        usdc_value_in_usdc = total_usdc_raw / 1e6
+
+        total_value = weth_value_in_usdc + usdc_value_in_usdc
+        target_value = total_value / 2.0  # 理想は50:50
+
+        # 5. 差額からスワップすべき量を計算
+        swap_zero_for_one = "0"
+        swap_amount = 0
+
+        # WETHが多すぎる場合 -> WETHを売る (0 for 1)
+        if weth_value_in_usdc > target_value:
+            excess_weth_value = weth_value_in_usdc - target_value
+
+            # 💡 差額が1ドル未満ならガス代の無駄なのでスワップしない
+            if excess_weth_value > 1.0:
+                weth_to_sell = excess_weth_value / current_price
+                swap_zero_for_one = "1"
+                # 支払う(Exact Input)なのでマイナス値にする
+                swap_amount = -int(weth_to_sell * 1e18)
+
+        # USDCが多すぎる場合 -> USDCを売る (1 for 0)
+        elif usdc_value_in_usdc > target_value:
+            excess_usdc_value = usdc_value_in_usdc - target_value
+
+            if excess_usdc_value > 1.0:
+                swap_zero_for_one = "0"
+                swap_amount = -int(excess_usdc_value * 1e6)
+
+        return swap_zero_for_one, str(swap_amount)
+
+    def executeReposition(self, rpcURL, inCurrentPrice, inCurrentTick, inSqrtP):
+        """_summary_
+            リポジションを行う関数
+
+        Returns:
+
+        """
+
+        # 新規レンジを計算
+        ticks = self.calcNewTick(currentPrice=inCurrentPrice)
+        TickLower = ticks[0]
+        TickUpper = ticks[1]
+
+        currentSqrtPriceX96 = int(inSqrtP * (2**96))
+
+        env_vars = os.environ.copy()
+
+        # 概算スワップ料を計算
+        swap_zero_for_one, swap_amount_str = self.calc_approx_swap_amount(
+            inCurrentPrice, inCurrentTick
+        )
+
+        self.log.info(
+            f"Swap Required: zeroForOne={swap_zero_for_one}, amount={swap_amount_str}"
+        )
+
+        # 環境変数の設定
+        env_vars["DYNAMIC_OLD_LOWER"] = str(self.tickLower)
+        env_vars["DYNAMIC_OLD_UPPER"] = str(self.tickUpper)
+        env_vars["DYNAMIC_NEW_LOWER"] = str(TickLower)
+        env_vars["DYNAMIC_NEW_UPPER"] = str(TickUpper)
+        env_vars["EXACT_LIQUIDITY"] = str(self.liquidity)
+        env_vars["SQRT_PRICE"] = str(currentSqrtPriceX96)
+        env_vars["SWAP_ZERO_FOR_ONE"] = str(swap_zero_for_one)
+        env_vars["SWAP_AMOUNT"] = str(swap_amount_str)
+
+        command = [
+            "forge",
+            "script",
+            "script/Reposition.s.sol:Reposition",
+            "--rpc-url",
+            rpcURL,
+            "--broadcast",
+            "--private-key",
+            self.privateKey,
+            "-vvvv",
+        ]
+
+        response = self.commandExecuter(command, env_vars)
+
+        if response[0]:
+            self.log.info(f"successffully positioned new PoolRange \n {response[1]}")
+
+            # リポジションに成功したらレンジの値を更新する
+            self.tickLower = TickLower
+            self.tickUpper = TickUpper
+
+            return True
+
+        else:
+            self.log.error(f"Pool Repositioning FAILED \n {response[1]}")
+            return False

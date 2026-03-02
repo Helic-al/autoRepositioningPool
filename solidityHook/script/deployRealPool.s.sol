@@ -10,7 +10,6 @@ import {CurrencyLibrary, Currency} from "@uniswap/v4-core/src/types/Currency.sol
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
-import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 
 // ★ 追加: 動的手数料のフラグを読み込むためのライブラリ
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
@@ -47,9 +46,13 @@ contract DeployRealPool is Script {
         Currency token0 = Currency.wrap(WETH_ADDRESS);
         Currency token1 = Currency.wrap(USDC_ADDRESS);
 
-        IPoolManager manager = IPoolManager(POOL_MANAGER);
+        // IPoolManager manager = IPoolManager(POOL_MANAGER);
         
-        PoolModifyLiquidityTest lpRouter = new PoolModifyLiquidityTest(manager);
+        // あたらしくルーターアドレスが必要な場合にはnewする、それ以外は古いものを渡す
+        // PoolModifyLiquidityTest lpRouter = new PoolModifyLiquidityTest(manager);
+        // console.log("Liquidity Router deployed at:", address(lpRouter));
+        address OLD_ROUTER = 0x264C16Cd53412181c83B518e72d01a57ebfcF2bD; 
+        PoolModifyLiquidityTest lpRouter = PoolModifyLiquidityTest(OLD_ROUTER);
         console.log("Liquidity Router deployed at:", address(lpRouter));
 
         IERC20(WETH_ADDRESS).approve(address(lpRouter), type(uint256).max);
@@ -64,18 +67,18 @@ contract DeployRealPool is Script {
         });
 
         // 前回と同じ初期価格 (1 WETH = 1987 USDC)
-        uint160 startingPrice = 3630693529457685640243176;
+        uint160 startingPrice = 3548501948877255806550016;
         
         // manager.initialize(key, startingPrice);
         // console.log("Dynamic Fee Pool Initialized!");
 
         // 上下約10%の集中流動性レンジを指定
-        int24 tickLower = -200880;
-        int24 tickUpper = -198840;
+        int24 tickLower = -200580;
+        int24 tickUpper = -200040;
 
         // 引き出して戻ってきた資金を再度投入します
-        uint256 amount0Desired = 0.46 ether;
-        uint256 amount1Desired = 900 * 1e6;
+        uint256 amount0Desired = 0.001 ether;
+        uint256 amount1Desired = 3 * 1e6;
 
         uint128 liquidity = LiquidityAmounts.getLiquidityForAmounts(
             startingPrice,

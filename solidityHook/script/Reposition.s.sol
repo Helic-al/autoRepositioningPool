@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.26;
+
+import {Script} from "forge-std/Script.sol";
+import {console} from "forge-std/console.sol";
+import {console} from "forge-std/console.sol";
+import {IPoolManager, ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
+import {CurrencyLibrary, Currency} from "@uniswap/v4-core/src/types/Currency.sol";
+import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
+import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
+import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
+
+// V4公式の流動性追加用ルーター
+import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiquidityTest.sol";
+
+interface IERC20 {
+    function approve(address spender, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+}
+
+contract Reposition is Script {
+    using CurrencyLibrary for Currency;
+
+    address constant POOL_MANAGER = 0xe54aCE66bD482c5781c9F69f89273586975FFcAC;
+    
+    // ★ あなたのHookアドレス
+    address constant HOOK_ADDRESS = 0x3D09F7f25cfe9b71Eb8C2787AcB56dEe09728080; 
+    
+    // ★ 【超重要】前回のログに出力されたルーターアドレスをここに貼ってください
+    address constant OLD_ROUTER = 0x264C16Cd53412181c83B518e72d01a57ebfcF2bD; 
+
+    address constant WETH_ADDRESS = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
+    address constant USDC_ADDRESS = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
+
+    int24 constant TICK_SPACING = 60;
+    uint24 constant LP_FEE = LPFeeLibrary.DYNAMIC_FEE_FLAG; // 固定で作成してしまった500を指定してプールを特定します
+
+    function run() external {
+        vm.startBroadcast();
+
+        // pythonから環境変数を受け取る
+        int24 oldTickLower = int24(vm.envInt("DYNAMIC_OLD_LOWER"));
+        int24 oldTickUpper = int24(vm.envInt("DYNAMIC_OLD_UPPER"));
+        int24 newTickLower = int24(vm.envInt("DYNAMIC_NEW_LOWER"));
+        int24 newTickUpper= int24(vm.envInt("DYNAMIC_NEW_UPPER"));
+        int256 exactLiquidity = vm.envInt("EXACT_LIQUIDITY");
+
+        int256 swapAmount = vm.envInt("SWAP_AMOUNT");
+        bool zeroForOne = vm.envUint("SWAP_ZERO_FOR_ONE") == 1;
+
+
+        console.log("--- Reposition Parameters ---");
+        console.log("Old Range:", oldTickLower);
+        console.log("to", oldTickUpper);
+        console.log("New Range:", newTickLower);
+        console.log("to", newTickUpper);
+        console.log("Liquidity to Withdraw:", exactLiquidity);
+
+        Currency token0 = Currency.wrap(WETH_ADDRESS);
+        Currency token1 = Currency.wrap(USDC_ADDRESS);
+
+        PoolKey memory key = PoolKey({
+            currency0: token0,
+            currency1: token1,
+            fee: LP_FEE,
+            tickSpacing: TICK_SPACING,
+            hooks: IHooks(HOOK_ADDRESS)
+        });
+            
+        console.log("Withdrawing liquidity...");
+
+        PoolModifyLiquidityTest(OLD_ROUTER).modifyLiquidity(
+            key,
+            ModifyLiquidityParams({
+                tickLower: oldTickLower,
+                tickUpper: oldTickUpper,
+                liquidityDelta: -int256(uint256(exactLiquidity)), // マイナス指定で引き出し
+                salt: bytes32(0)
+            }),
+            ""
+        );
+
+        console.log("Withdrawal Successful!");
+
+        // swap処理
+        IPoolManager manager = IPoolManager(POOL_MANAGER);
+        PoolSwapTest swapRouter = new PoolSwapTest(manager);
+
+        if (swapAmount < 0){
+            console.log("Executing Adjust Swap ...");
+            swapRouter.swap(
+                key,
+                SwapParams({
+                    zeroForOne:zeroForOne,
+                    amountSpecified: swapAmount,
+                    sqrtPriceLimitX96: zeroForOne
+                        ? TickMath.MIN_SQRT_PRICE + 1
+                        : TickMath.MAX_SQRT_PRICE - 1
+                }),
+                PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+                ""
+            );
+        }
+
+    
+        // ここから流動性投入処理を記述
+
+        PoolModifyLiquidityTest lpRouter = PoolModifyLiquidityTest(OLD_ROUTER);
+
+        // ウォレットから残高を取得
+
+        // // 本番用
+        uint256 amount0Desired = IERC20(WETH_ADDRESS).balanceOf(msg.sender);
+        uint256 amount1Desired = IERC20(USDC_ADDRESS).balanceOf(msg.sender);
+
+        // テスト用
+        // uint256 amount0Desired = 0.001 ether;
+        // uint256 amount1Desired = 3 * 10**6;
+
+        uint160 currentSqrtPrice = uint160(vm.envUint("SQRT_PRICE"));
+
+        // 新規プール与える流動性を計算
+        uint128 newLiquidity = LiquidityAmounts.getLiquidityForAmounts(
+            currentSqrtPrice,
+            TickMath.getSqrtPriceAtTick(newTickLower),
+            TickMath.getSqrtPriceAtTick(newTickUpper),
+            amount0Desired,
+            amount1Desired
+        );
+
+        lpRouter.modifyLiquidity(
+            key,
+            ModifyLiquidityParams({
+                tickLower: newTickLower,
+                tickUpper: newTickUpper,
+                liquidityDelta: int256(uint256(newLiquidity)),
+                salt: bytes32(0)
+            }),
+            ""
+        );
+        console.log("Reposition Complete!");
+        vm.stopBroadcast();
+    }
+}

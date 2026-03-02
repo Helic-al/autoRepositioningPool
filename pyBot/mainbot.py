@@ -32,13 +32,15 @@ from hyperliquid.info import Info
 from hyperliquid.utils import constants
 from logger import setup_logger
 from lowPassFilter import LowPassFilter
+from oorDetector import oorDetector
+from PoolRepositioner import PoolRepositioner
 from v4PoolUtils import poolUtils
 from web3 import Web3
 
 load_dotenv("./.env")
 
 # ログを残す
-log = setup_logger("DeltaNeutV4.log")
+log = setup_logger("bot_log.log")
 orderLog = setup_logger(name="OrderLogV4", log_file="bot_log.log")
 
 # --- ユーザー設定 ---
@@ -61,19 +63,14 @@ AWS_SECRET_KEY = os.environ.get("AWS_SECRET", "")
 REGION_NAME = "ap-northeast-1"
 
 # --- インフラ設定 ---
-RPC_URL = os.environ.get("RPC_URL", "")
+INFURA_RPC_URL = os.environ.get("INFURA_RPC_URL", "")
+ALCHEMY_RPC_URL = os.environ.get("ALCHEMY_RPC_URL", "")
 HL_BASE_URL = constants.MAINNET_API_URL
 
 # ===================================================================
 # V4 コントラクト設定 (デフォルトは Anvil デプロイ結果)
 # ===================================================================
 
-# === COPY TO PYTHON CONFIG ===
-#   POOL_FEE = 500
-#   CURRENCY0 = "0x511245A8701Db0512d907e0590f72a1Fd27C7d22"
-#   CURRENCY1 = "0xF46Af532e1E648E61690631AaAB9c1A60374A184"
-#   HOOK_ADDRESS = "0xEbB6C7CAc8824970e7BA98d63e503267132Ac080"
-#   0x2848e08431ee6180fee25a8f8dbdf9c117953c353de3e499ac732ab5e38c678e
 
 POOL_MANAGER_ADDRESS = os.environ.get(
     "POOL_MANAGER_ADDRESS", "0x13B92bc2397c97b90fc92bf42d64A832DbB66aD4"
@@ -285,6 +282,12 @@ def get_price_from_sqrt(sqrt_pa):
     return price_usd
 
 
+def convertPriceToTick(price):
+    targetPrice = price / 1e12
+    targetTick = int(math.log(targetPrice, 1.0001))
+    return targetTick
+
+
 def format_decimal(val, precision=18):
     """floatをDynamoDB用のDecimalに安全に変換する"""
     if val is None:
@@ -335,8 +338,11 @@ class DeltaPnLTracker:
 class DeltaNeutralBotV4:
     def __init__(self):
         # 1. 接続初期化
-        self.w3 = Web3(Web3.HTTPProvider(RPC_URL))
+        # メインループ用のweb3インスタンス
+        self.w3 = Web3(Web3.HTTPProvider(INFURA_RPC_URL))
         self.coin = "ETH"
+
+        self.secret = ARB_SECRET
 
         # V4コントラクト: extsload経由で読み取り
         self.pool_manager = self.w3.eth.contract(
@@ -344,9 +350,12 @@ class DeltaNeutralBotV4:
             abi=json.loads(POOL_MANAGER_ABI),
         )
 
+        # フック監視用のweb3インスタンス
+        self.w3_hook = Web3(Web3.HTTPProvider(ALCHEMY_RPC_URL))
+
         # Hook コントラクト (イベント監視用)
         if HOOK_ADDRESS:
-            self.hook_contract = self.w3.eth.contract(
+            self.hook_contract = self.w3_hook.eth.contract(
                 address=Web3.to_checksum_address(HOOK_ADDRESS),
                 abi=json.loads(HOOK_ABI),
             )
@@ -400,7 +409,7 @@ class DeltaNeutralBotV4:
         # --- DRY_RUN: 仮想ヘッジポジション ---
         self.virtual_hedge_pos = 0.0  # 仮想ショートポジション (ETH)
 
-        log.info(f"✅ V4 Bot initialized | RPC: {RPC_URL}")
+        log.info(f"✅ V4 Bot initialized | RPC: {INFURA_RPC_URL}")
         log.info(f"📍 PoolManager: {POOL_MANAGER_ADDRESS}")
         log.info(f"📍 Hook: {HOOK_ADDRESS}")
         log.info(f"🎨 DRY_RUN: {DRY_RUN}")
@@ -483,6 +492,7 @@ class DeltaNeutralBotV4:
             return {
                 "sqrtP_raw": sqrtP,
                 "price": human_price,
+                "tick": tick,
                 "L": real_L,
                 "my_L": my_liquidity,
                 "tickLower": self.tickLower,
@@ -785,7 +795,7 @@ class DeltaNeutralBotV4:
 
         while True:
             try:
-                current_block = self.w3.eth.block_number
+                current_block = self.w3_hook.eth.block_number
 
                 # 新しいブロックがなければスキップ
                 if current_block <= self.last_processed_block:
@@ -876,22 +886,73 @@ class DeltaNeutralBotV4:
         last_log_time = datetime.datetime.now()
         DECIMALS_ETH = 1e18
 
+        dataInit = self.get_onchain_data()
+
+        sqrtPa = 1.0001 ** (dataInit["tickLower"] / 2)
+        sqrtPb = 1.0001 ** (dataInit["tickUpper"] / 2)
+        # レンジアウトスコアクラスのインスタンス生成
+        oor = oorDetector(
+            upperPrice=get_price_from_sqrt(sqrtPb),
+            lowerPrice=get_price_from_sqrt(sqrtPa),
+            thresholdScore=float(os.environ.get("THRESHOLD_SCORE")),
+            k=float(os.environ.get("K")),
+        )
+
+        # プールのリポジションクラスのインスタンス生成
+        pr = PoolRepositioner(
+            self.pool_manager,
+            HOOK_ADDRESS,
+            dataInit["my_L"],
+            dataInit["tickLower"],
+            dataInit["tickUpper"],
+            ARB_SECRET,
+        )
+
+        log.info("PoolRepositioner SET")
+        log.info(
+            f"Liquidity:{dataInit['my_L']}, tickLower:{dataInit['tickLower']}, tickUpper:{dataInit['tickUpper']}"
+        )
+        # リポジションの試行回数
+        repositionCount = 0
+
         lpf = LowPassFilter(alpha=0.15)
         tracker = DeltaPnLTracker()
 
         while True:
             data = self.get_onchain_data()
 
-            # cexPrice取得
-            cex_price = self.get_cex_price(data["price"])
-
             if data is None:
                 time.sleep(3)
                 continue
 
-            # --- 1. ガード条件: 流動性が0なら何もしない ---
-            if data["L"] == 0:
-                log.info("⏳ Pool has 0 Liquidity. Waiting...")
+            # cexPrice取得
+            cex_price = self.get_cex_price(data["price"])
+
+            # --- 1. ガード条件: 流動性が0ならポジション作成---
+            if data["my_L"] == 0:
+                log.info("pool Liquidity is zero. Making a new Pool position...")
+                log.info(
+                    f"price:{data['price']},tick:{data['tick']},sqrtP:{data['sqrtP_raw']}"
+                )
+                PRresponse = pr.executeReposition(
+                    INFURA_RPC_URL, data["price"], data["tick"], data["sqrtP_raw"]
+                )
+                if PRresponse:
+                    log.info("successfully repositioned!")
+                    sendDiscord("successfully repositioned!")
+                    repositionCount = 0
+                elif repositionCount < 4:
+                    log.info("Repostioning FAILED ...")
+                    sendDiscord("Repositioning FAILED ...")
+                    repositionCount += 1
+                else:
+                    log.info(
+                        "Retried repositioning for 3 times and all failure. stopping Bot."
+                    )
+                    sendDiscord(
+                        "Retried repositioning for 3 times and all failure. stopping Bot."
+                    )
+                    exit()
                 time.sleep(10)
                 continue
 
@@ -1005,6 +1066,31 @@ class DeltaNeutralBotV4:
                         lpf.smoothed_value = None
                 else:
                     self.BailoutBreachTime = None
+
+            # oorDetectorによるレンジアウト判定
+            if oor.runDetector(current_price):
+                # プールのりポジションを行う
+                PRresponse = pr.executeReposition(
+                    INFURA_RPC_URL, current_price, data["tick"], data["sqrtP_raw"]
+                )
+                if PRresponse:
+                    log.info("successfully repositioned!")
+                    sendDiscord("successfully repositioned!")
+                    repositionCount = 0
+                elif repositionCount < 4:
+                    log.info("Repostioning FAILED ...")
+                    sendDiscord("Repositioning FAILED ...")
+                    repositionCount += 1
+                else:
+                    log.info(
+                        "Retried repositioning for 3 times and all failure. stopping Bot."
+                    )
+                    sendDiscord(
+                        "Retried repositioning for 3 times and all failure. stopping Bot."
+                    )
+                    exit()
+                time.sleep(10)
+                continue
 
             # --- 6. DynamoDB記録 ---
             now = datetime.datetime.now()
