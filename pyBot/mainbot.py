@@ -874,6 +874,23 @@ class DeltaNeutralBotV4:
             log.info(f"❌ Hook delta-zero error: {e}")
             sendDiscord(f"❌ Hook delta-zero error: {e}")
 
+    def _executeReposition(self, data, pr):
+        """_summary_
+            リポジション実行
+        Args:
+            data (dataFrame): get_onchain_dataの返り値data
+            pr (PoolRepositioner): PoolRepositionerクラスインスタンス
+        """
+        currentCexPrice = self.get_cex_price(data["price"])
+        log.info(f"Try repositioning @price:${currentCexPrice}...")
+        PRresponse = pr.executeReposition(INFURA_RPC_URL, currentCexPrice)
+        if PRresponse:
+            log.info(f"successfully repositioned @${currentCexPrice}!")
+            sendDiscord(f"successfully repositioned @${currentCexPrice}!")
+            return True
+        else:
+            return False
+
     # ============================================================
     # メインループ
     # ============================================================
@@ -931,30 +948,18 @@ class DeltaNeutralBotV4:
             # --- 1. ガード条件: 流動性が0ならポジション作成---
             if data["my_L"] == 0:
                 log.info("pool Liquidity is zero. Making a new Pool position...")
-                log.info(
-                    f"price:{data['price']},tick:{data['tick']},sqrtP:{data['sqrtP_raw']}"
-                )
-                PRresponse = pr.executeReposition(
-                    INFURA_RPC_URL, data["price"], data["tick"], data["sqrtP_raw"]
-                )
-                if PRresponse:
-                    log.info("successfully repositioned!")
-                    sendDiscord("successfully repositioned!")
+                if self._executeReposition(data, pr):
                     repositionCount = 0
+                    time.sleep(5)
+                    continue
                 elif repositionCount < 4:
-                    log.info("Repostioning FAILED ...")
-                    sendDiscord("Repositioning FAILED ...")
+                    log.info("FAILED to create PoolLIquidity. Trying again...")
                     repositionCount += 1
+                    time.sleep(5)
+                    continue
                 else:
-                    log.info(
-                        "Retried repositioning for 3 times and all failure. stopping Bot."
-                    )
-                    sendDiscord(
-                        "Retried repositioning for 3 times and all failure. stopping Bot."
-                    )
+                    log.info("FAILED to create Position 3 times. Stopping Bot...")
                     exit()
-                time.sleep(10)
-                continue
 
             # --- 2. デルタ計算 ---
 
@@ -1070,25 +1075,19 @@ class DeltaNeutralBotV4:
             # oorDetectorによるレンジアウト判定
             if oor.runDetector(current_price):
                 # プールのりポジションを行う
-                PRresponse = pr.executeReposition(
-                    INFURA_RPC_URL, current_price, data["tick"], data["sqrtP_raw"]
-                )
-                if PRresponse:
-                    log.info("successfully repositioned!")
-                    sendDiscord("successfully repositioned!")
+                if self._executeReposition(data, pr):
                     repositionCount = 0
+                    time.sleep(5)
+                    continue
                 elif repositionCount < 4:
-                    log.info("Repostioning FAILED ...")
-                    sendDiscord("Repositioning FAILED ...")
+                    log.info("FAILED to create PoolLIquidity. Trying again...")
                     repositionCount += 1
+                    time.sleep(5)
+                    continue
                 else:
-                    log.info(
-                        "Retried repositioning for 3 times and all failure. stopping Bot."
-                    )
-                    sendDiscord(
-                        "Retried repositioning for 3 times and all failure. stopping Bot."
-                    )
+                    log.info("FAILED to create Position 3 times. Stopping Bot...")
                     exit()
+
                 time.sleep(10)
                 continue
 

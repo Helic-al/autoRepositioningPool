@@ -87,7 +87,7 @@ class PoolRepositioner:
         newTickLower = (newTickLower // tickSpacing) * tickSpacing
         newTickUpper = (newTickUpper // tickSpacing) * tickSpacing
 
-        return (newTickLower, newTickUpper)
+        return (currentTick, newTickLower, newTickUpper)
 
     def calc_approx_swap_amount(
         self, current_price, current_tick, wallet_weth_wei=0, wallet_usdc_raw=0
@@ -162,7 +162,14 @@ class PoolRepositioner:
 
         return swap_zero_for_one, str(swap_amount)
 
-    def executeReposition(self, rpcURL, inCurrentPrice, inCurrentTick, inSqrtP):
+    def getSqrtPriceX96fromUSDCPrice(self, inCexPrice: float):
+
+        rawSqrtPrice = math.sqrt(inCexPrice * 1e-12)
+        sqrtPriceX96 = int(rawSqrtPrice * (2**96))
+
+        return sqrtPriceX96
+
+    def executeReposition(self, rpcURL, inCurrentPrice):
         """_summary_
             リポジションを行う関数
 
@@ -172,16 +179,17 @@ class PoolRepositioner:
 
         # 新規レンジを計算
         ticks = self.calcNewTick(currentPrice=inCurrentPrice)
-        TickLower = ticks[0]
-        TickUpper = ticks[1]
+        CurrentTick = ticks[0]
+        TickLower = ticks[1]
+        TickUpper = ticks[2]
 
-        currentSqrtPriceX96 = int(inSqrtP * (2**96))
+        currentSqrtPriceX96 = self.getSqrtPriceX96fromUSDCPrice(inCurrentPrice)
 
         env_vars = os.environ.copy()
 
         # 概算スワップ料を計算
         swap_zero_for_one, swap_amount_str = self.calc_approx_swap_amount(
-            inCurrentPrice, inCurrentTick
+            inCurrentPrice, CurrentTick
         )
 
         self.log.info(
