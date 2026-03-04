@@ -7,7 +7,7 @@ venv
 .env
 .venv/
 bot_log.log
-
+*.log
 
 # Foundry
 out/

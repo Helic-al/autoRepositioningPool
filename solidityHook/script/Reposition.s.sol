@@ -16,6 +16,9 @@ import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 // V4公式の流動性追加用ルーター
 import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiquidityTest.sol";
 
+// swap用にV3公式ルーター
+import "@uniswap/v3-periphery/interfaces/ISwapRouter.sol";
+
 interface IERC20 {
     function approve(address spender, uint256 amount) external returns (bool);
     function balanceOf(address account) external view returns (uint256);
@@ -39,8 +42,6 @@ contract Reposition is Script {
     uint24 constant LP_FEE = LPFeeLibrary.DYNAMIC_FEE_FLAG; // 固定で作成してしまった500を指定してプールを特定します
 
     function run() external {
-        vm.startBroadcast();
-
         // pythonから環境変数を受け取る
         int24 oldTickLower = int24(vm.envInt("DYNAMIC_OLD_LOWER"));
         int24 oldTickUpper = int24(vm.envInt("DYNAMIC_OLD_UPPER"));
@@ -48,9 +49,12 @@ contract Reposition is Script {
         int24 newTickUpper= int24(vm.envInt("DYNAMIC_NEW_UPPER"));
         int256 exactLiquidity = vm.envInt("EXACT_LIQUIDITY");
 
+        // wallet情報
+        uint256 privateKey = vm.envUint("PRIVATE_KEY");
+        address myWallet = vm.addr(privateKey);
+
         int256 swapAmount = vm.envInt("SWAP_AMOUNT");
         bool zeroForOne = vm.envUint("SWAP_ZERO_FOR_ONE") == 1;
-
 
         console.log("--- Reposition Parameters ---");
         console.log("Old Range:", oldTickLower);
@@ -69,6 +73,8 @@ contract Reposition is Script {
             tickSpacing: TICK_SPACING,
             hooks: IHooks(HOOK_ADDRESS)
         });
+
+        vm.startBroadcast(privateKey);
             
         console.log("Withdrawing liquidity...");
 
@@ -86,35 +92,43 @@ contract Reposition is Script {
         console.log("Withdrawal Successful!");
 
         // swap処理
-        IPoolManager manager = IPoolManager(POOL_MANAGER);
-        PoolSwapTest swapRouter = new PoolSwapTest(manager);
+        if (swapAmount < 0) {
+            console.log("Executing Adjust Swap on Uniswap V3 ...");
 
-        if (swapAmount < 0){
-            console.log("Executing Adjust Swap ...");
-            swapRouter.swap(
-                key,
-                SwapParams({
-                    zeroForOne:zeroForOne,
-                    amountSpecified: swapAmount,
-                    sqrtPriceLimitX96: zeroForOne
-                        ? TickMath.MIN_SQRT_PRICE + 1
-                        : TickMath.MAX_SQRT_PRICE - 1
-                }),
-                PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
-                ""
-            );
+            uint256 expectedOut = vm.envUint("DYNAMIC_SWAP_MIN_OUT");
+
+            uint256 absAmount = uint256(-swapAmount);
+
+            // 承認
+            if (zeroForOne) {
+                IERC20(WETH_ADDRESS).approve(V3_ROUTER, absAmount);
+            } else {
+                IERC20(USDC_ADDRESS).approve(V3_ROUTER, absAmount);
+            }
+
+            ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+                tokenIn: zeroForOne ? WETH : USDC,
+                tokenOut: zeroForOne ? USDC : WETH,
+                fee: 500, // 例: Arbitrumで流動性の厚い 0.05% プール
+                recipient: myWallet,
+                deadline: block.timestamp + 60,
+                amountIn: absAmount,
+                amountOutMinimum: expectedOut, // 👈 0は絶対ダメ！計算した最低受け取り額を入れる
+                sqrtPriceLimitX96: 0
+            });
+
+            ISwapRouter(V3_ROUTER).exactInputSingle(params);
+            console.log("swap successful!");
         }
 
-    
+            
         // ここから流動性投入処理を記述
 
         PoolModifyLiquidityTest lpRouter = PoolModifyLiquidityTest(OLD_ROUTER);
 
-        // ウォレットから残高を取得
-
         // // 本番用
-        uint256 amount0Desired = IERC20(WETH_ADDRESS).balanceOf(msg.sender);
-        uint256 amount1Desired = IERC20(USDC_ADDRESS).balanceOf(msg.sender);
+        uint256 amount0Desired = IERC20(WETH_ADDRESS).balanceOf(myWallet);
+        uint256 amount1Desired = IERC20(USDC_ADDRESS).balanceOf(myWallet);
 
         // テスト用
         // uint256 amount0Desired = 0.001 ether;
@@ -130,6 +144,9 @@ contract Reposition is Script {
             amount0Desired,
             amount1Desired
         );
+
+        IERC20(WETH_ADDRESS).approve(address(lpRouter), amount0Desired);
+        IERC20(USDC_ADDRESS).approve(address(lpRouter), amount1Desired);
 
         lpRouter.modifyLiquidity(
             key,

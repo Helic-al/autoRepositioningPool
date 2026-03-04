@@ -1079,7 +1079,7 @@ class DeltaNeutralBotV4:
                     repositionCount = 0
                     time.sleep(5)
                     continue
-                elif repositionCount < 4:
+                elif repositionCount < 3:
                     log.info("FAILED to create PoolLIquidity. Trying again...")
                     repositionCount += 1
                     time.sleep(5)

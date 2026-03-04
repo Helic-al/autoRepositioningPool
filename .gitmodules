@@ -8,3 +8,6 @@
 	path = solidityHook/lib/v4-periphery
 	url = https://github.com/Uniswap/v4-periphery
 	ignore =  untracked
+[submodule "solidityHook/lib/v3-periphery"]
+	path = solidityHook/lib/v3-periphery
+	url = https://github.com/Uniswap/v3-periphery

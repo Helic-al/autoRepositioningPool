@@ -169,6 +169,20 @@ class PoolRepositioner:
 
         return sqrtPriceX96
 
+    def calcExpectedOut(
+        self, inAbsAmount, inZeroForOne, inCurrentPrice, inSlippageTolerance=0.01
+    ):
+        if inZeroForOne == "1":
+            # WETHを売ってUSDCを買う
+            idealOut = (inAbsAmount / 1e18) * inCurrentPrice * 1e6
+            retOut = int(idealOut * (1.0 - inSlippageTolerance))
+        else:
+            # USDCを売ってWETHを買う
+            idealOut = (inAbsAmount / 1e6) / inCurrentPrice * 1e18
+            retOut = int(idealOut * (1.0 - inSlippageTolerance))
+
+        return retOut
+
     def executeReposition(self, rpcURL, inCurrentPrice):
         """_summary_
             リポジションを行う関数
@@ -188,15 +202,24 @@ class PoolRepositioner:
         env_vars = os.environ.copy()
 
         # 概算スワップ料を計算
-        swap_zero_for_one, swap_amount_str = self.calc_approx_swap_amount(
+        swap_zero_for_one, swap_amount = self.calc_approx_swap_amount(
             inCurrentPrice, CurrentTick
         )
 
+        # 許容最小値を計算
+        expectedOut = self.calcExpectedOut(
+            abs(swap_amount),
+            swap_zero_for_one,
+            inCurrentPrice,
+            inSlippageTolerance=0.005,
+        )
+
         self.log.info(
-            f"Swap Required: zeroForOne={swap_zero_for_one}, amount={swap_amount_str}"
+            f"Swap Required: zeroForOne={swap_zero_for_one}, amount={swap_amount}"
         )
 
         # 環境変数の設定
+        env_vars["PRIVATE_KEY"] = str(self.privateKey)
         env_vars["DYNAMIC_OLD_LOWER"] = str(self.tickLower)
         env_vars["DYNAMIC_OLD_UPPER"] = str(self.tickUpper)
         env_vars["DYNAMIC_NEW_LOWER"] = str(TickLower)
@@ -204,7 +227,8 @@ class PoolRepositioner:
         env_vars["EXACT_LIQUIDITY"] = str(self.liquidity)
         env_vars["SQRT_PRICE"] = str(currentSqrtPriceX96)
         env_vars["SWAP_ZERO_FOR_ONE"] = str(swap_zero_for_one)
-        env_vars["SWAP_AMOUNT"] = str(swap_amount_str)
+        env_vars["SWAP_AMOUNT"] = str(swap_amount)
+        env_vars["DYNAMIC_SWAP_MIN_OUT"] = str(expectedOut)
 
         command = [
             "forge",
