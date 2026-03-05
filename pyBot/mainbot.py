@@ -52,7 +52,7 @@ THRESHOLD = 0.080  # 初期リバランス閾値
 ALLOWABLE_RISK_PCT = 0.080  # 運用資金から許容するズレ(デルタETH)の割合
 # TARGET_RATIO = 0.5  # しきい値の何割までデルタを打ち消すか
 MAX_RETRY = 3  # 指値注文のリトライ回数
-RECORD_TIME = 30  # dynamoDBへの記録間隔(秒)
+RECORD_TIME = 300  # dynamoDBへの記録間隔(秒)
 
 # DRY_RUN: true なら Hyperliquid 注文を発行せずログのみ
 DRY_RUN = os.environ.get("DRY_RUN", True)

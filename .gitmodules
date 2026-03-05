@@ -11,3 +11,9 @@
 [submodule "solidityHook/lib/v3-periphery"]
 	path = solidityHook/lib/v3-periphery
 	url = https://github.com/Uniswap/v3-periphery
+[submodule "lib/v3-core"]
+	path = lib/v3-core
+	url = https://github.com/Uniswap/v3-core
+[submodule "solidityHook/lib/v3-core"]
+	path = solidityHook/lib/v3-core
+	url = https://github.com/Uniswap/v3-core

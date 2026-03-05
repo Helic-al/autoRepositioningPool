@@ -12,12 +12,14 @@ import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
 import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
+import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 
 // V4公式の流動性追加用ルーター
 import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiquidityTest.sol";
 
 // swap用にV3公式ルーター
-import "@uniswap/v3-periphery/interfaces/ISwapRouter.sol";
+import "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 
 interface IERC20 {
     function approve(address spender, uint256 amount) external returns (bool);
@@ -26,11 +28,13 @@ interface IERC20 {
 
 contract Reposition is Script {
     using CurrencyLibrary for Currency;
+    using StateLibrary for IPoolManager;
+    using PoolIdLibrary for PoolKey;
 
     address constant POOL_MANAGER = 0xe54aCE66bD482c5781c9F69f89273586975FFcAC;
     
     // ★ あなたのHookアドレス
-    address constant HOOK_ADDRESS = 0x3D09F7f25cfe9b71Eb8C2787AcB56dEe09728080; 
+    address constant HOOK_ADDRESS = 0xcBA09533321240F8b8d71549Ecde154A97164080; 
     
     // ★ 【超重要】前回のログに出力されたルーターアドレスをここに貼ってください
     address constant OLD_ROUTER = 0x264C16Cd53412181c83B518e72d01a57ebfcF2bD; 
@@ -38,6 +42,9 @@ contract Reposition is Script {
     address constant WETH_ADDRESS = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
     address constant USDC_ADDRESS = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
 
+    // Arbitrum公式の Uniswap V3 SwapRouter アドレス
+    address constant V3_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    
     int24 constant TICK_SPACING = 60;
     uint24 constant LP_FEE = LPFeeLibrary.DYNAMIC_FEE_FLAG; // 固定で作成してしまった500を指定してプールを特定します
 
@@ -107,8 +114,8 @@ contract Reposition is Script {
             }
 
             ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
-                tokenIn: zeroForOne ? WETH : USDC,
-                tokenOut: zeroForOne ? USDC : WETH,
+                tokenIn: zeroForOne ? WETH_ADDRESS : USDC_ADDRESS,
+                tokenOut: zeroForOne ? USDC_ADDRESS : WETH_ADDRESS,
                 fee: 500, // 例: Arbitrumで流動性の厚い 0.05% プール
                 recipient: myWallet,
                 deadline: block.timestamp + 60,
@@ -127,26 +134,27 @@ contract Reposition is Script {
         PoolModifyLiquidityTest lpRouter = PoolModifyLiquidityTest(OLD_ROUTER);
 
         // // 本番用
-        uint256 amount0Desired = IERC20(WETH_ADDRESS).balanceOf(myWallet);
-        uint256 amount1Desired = IERC20(USDC_ADDRESS).balanceOf(myWallet);
+        // uint256 amount0Desired = IERC20(WETH_ADDRESS).balanceOf(myWallet);
+        // uint256 amount1Desired = IERC20(USDC_ADDRESS).balanceOf(myWallet);
 
         // テスト用
-        // uint256 amount0Desired = 0.001 ether;
-        // uint256 amount1Desired = 3 * 10**6;
+        uint256 amount0Desired = 0.001 ether;
+        uint256 amount1Desired = 3 * 10**6;
 
-        uint160 currentSqrtPrice = uint160(vm.envUint("SQRT_PRICE"));
+        PoolId poolId = key.toId();
+        (uint160 actualSqrtPriceX96, , , ) = IPoolManager(POOL_MANAGER).getSlot0(poolId);
 
         // 新規プール与える流動性を計算
         uint128 newLiquidity = LiquidityAmounts.getLiquidityForAmounts(
-            currentSqrtPrice,
+            actualSqrtPriceX96,
             TickMath.getSqrtPriceAtTick(newTickLower),
             TickMath.getSqrtPriceAtTick(newTickUpper),
             amount0Desired,
             amount1Desired
         );
 
-        IERC20(WETH_ADDRESS).approve(address(lpRouter), amount0Desired);
-        IERC20(USDC_ADDRESS).approve(address(lpRouter), amount1Desired);
+        IERC20(WETH_ADDRESS).approve(address(lpRouter), (amount0Desired*11)/10);
+        IERC20(USDC_ADDRESS).approve(address(lpRouter), (amount1Desired*11)/10);
 
         lpRouter.modifyLiquidity(
             key,

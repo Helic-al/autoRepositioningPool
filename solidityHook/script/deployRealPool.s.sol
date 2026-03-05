@@ -27,7 +27,7 @@ contract DeployRealPool is Script {
     
     // ★ ここには【現在デプロイ済みのあなたのHookアドレス】をそのまま入れてください
     // 20260223 10:53 フック更新
-    address constant HOOK_ADDRESS = 0x3D09F7f25cfe9b71Eb8C2787AcB56dEe09728080; 
+    address constant HOOK_ADDRESS = 0xcBA09533321240F8b8d71549Ecde154A97164080; 
 
     address constant WETH_ADDRESS = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
     address constant USDC_ADDRESS = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
@@ -46,7 +46,7 @@ contract DeployRealPool is Script {
         Currency token0 = Currency.wrap(WETH_ADDRESS);
         Currency token1 = Currency.wrap(USDC_ADDRESS);
 
-        // IPoolManager manager = IPoolManager(POOL_MANAGER);
+        IPoolManager manager = IPoolManager(POOL_MANAGER);
         
         // あたらしくルーターアドレスが必要な場合にはnewする、それ以外は古いものを渡す
         // PoolModifyLiquidityTest lpRouter = new PoolModifyLiquidityTest(manager);
@@ -66,19 +66,19 @@ contract DeployRealPool is Script {
             hooks: IHooks(HOOK_ADDRESS)
         });
 
-        // 前回と同じ初期価格 (1 WETH = 1987 USDC)
-        uint160 startingPrice = 3548501948877255806550016;
+        // 前回と同じ初期価格
+        uint160 startingPrice = 3647938551979701820194816;
         
-        // manager.initialize(key, startingPrice);
-        // console.log("Dynamic Fee Pool Initialized!");
+        manager.initialize(key, startingPrice);
+        console.log("Dynamic Fee Pool Initialized!");
 
         // 上下約10%の集中流動性レンジを指定
-        int24 tickLower = -200580;
-        int24 tickUpper = -200040;
+        int24 tickLower = -200040;
+        int24 tickUpper = -199440;
 
         // 引き出して戻ってきた資金を再度投入します
-        uint256 amount0Desired = 0.001 ether;
-        uint256 amount1Desired = 3 * 1e6;
+        uint256 amount0Desired = 0.002 ether;
+        uint256 amount1Desired = 6 * 1e6;
 
         uint128 liquidity = LiquidityAmounts.getLiquidityForAmounts(
             startingPrice,

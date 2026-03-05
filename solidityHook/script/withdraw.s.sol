@@ -44,12 +44,12 @@ contract WithdrawRealPool is Script {
             hooks: IHooks(HOOK_ADDRESS)
         });
 
-        int24 tickLower = -200460;
-        int24 tickUpper = -200100;
+        int24 tickLower = -200580;
+        int24 tickUpper = -200040;
             
         // ★ あなたがArbiscanのログで確認した正確な流動性（liquidity）の数値
         // これをそのままマイナスにして全額引き出します
-        uint128 exactLiquidity = 5493341575498;
+        uint128 exactLiquidity = 3735731104236;
 
         console.log("Withdrawing liquidity...");
 

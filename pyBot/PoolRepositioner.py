@@ -36,6 +36,8 @@ class PoolRepositioner:
         """
 
         try:
+            subprocess.run(["forge", "clean"], capture_output=True)
+
             result = subprocess.run(
                 inCommand,
                 cwd="../solidityHook",
@@ -160,7 +162,7 @@ class PoolRepositioner:
                 swap_zero_for_one = "0"
                 swap_amount = -int(excess_usdc_value * 1e6)
 
-        return swap_zero_for_one, str(swap_amount)
+        return swap_zero_for_one, swap_amount
 
     def getSqrtPriceX96fromUSDCPrice(self, inCexPrice: float):
 
@@ -219,7 +221,7 @@ class PoolRepositioner:
         )
 
         # 環境変数の設定
-        env_vars["PRIVATE_KEY"] = str(self.privateKey)
+        env_vars["PRIVATE_KEY"] = "0x" + str(self.privateKey)
         env_vars["DYNAMIC_OLD_LOWER"] = str(self.tickLower)
         env_vars["DYNAMIC_OLD_UPPER"] = str(self.tickUpper)
         env_vars["DYNAMIC_NEW_LOWER"] = str(TickLower)
