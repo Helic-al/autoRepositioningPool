@@ -19,7 +19,7 @@ contract WithdrawRealPool is Script {
     address constant POOL_MANAGER = 0xe54aCE66bD482c5781c9F69f89273586975FFcAC;
     
     // ★ あなたのHookアドレス
-    address constant HOOK_ADDRESS = 0x3D09F7f25cfe9b71Eb8C2787AcB56dEe09728080; 
+    address constant HOOK_ADDRESS = 0xcBA09533321240F8b8d71549Ecde154A97164080; 
     
     // ★ 【超重要】前回のログに出力されたルーターアドレスをここに貼ってください
     address constant OLD_ROUTER = 0x264C16Cd53412181c83B518e72d01a57ebfcF2bD; 
@@ -44,12 +44,12 @@ contract WithdrawRealPool is Script {
             hooks: IHooks(HOOK_ADDRESS)
         });
 
-        int24 tickLower = -200580;
-        int24 tickUpper = -200040;
+        int24 tickLower = -200760;
+        int24 tickUpper = -200160;
             
         // ★ あなたがArbiscanのログで確認した正確な流動性（liquidity）の数値
         // これをそのままマイナスにして全額引き出します
-        uint128 exactLiquidity = 3735731104236;
+        uint128 exactLiquidity = 2252793526357;
 
         console.log("Withdrawing liquidity...");
 

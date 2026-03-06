@@ -11,7 +11,7 @@ interface IDeltaNeutralHook {
 
 contract DisableProtection is Script {
     // ★ あなたのHookアドレスをここに入力してください
-    address constant HOOK_ADDRESS = 0xcBA09533321240F8b8d71549Ecde154A97164080; 
+    address constant HOOK_ADDRESS = 0xF55DD6e6be1acb02E05c24dE345a13f6Efcd0080; 
 
     function run() external {
         vm.startBroadcast();

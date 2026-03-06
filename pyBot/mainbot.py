@@ -55,7 +55,7 @@ MAX_RETRY = 3  # 指値注文のリトライ回数
 RECORD_TIME = 300  # dynamoDBへの記録間隔(秒)
 
 # DRY_RUN: true なら Hyperliquid 注文を発行せずログのみ
-DRY_RUN = os.environ.get("DRY_RUN", True)
+DRY_RUN = os.environ.get("DRY_RUN", True).lower() in ("true", "1", "t")
 
 # aws設定
 AWS_ACCESS_KEY = os.environ.get("AWS_KEY", "")
@@ -467,9 +467,14 @@ class DeltaNeutralBotV4:
             if DRY_RUN:
                 # DRY_RUN: 仮想ポジションを使用
                 current_hedge = self.virtual_hedge_pos
+                print("DRY RUN right now")
             else:
                 # 本番: Hyperliquid から取得
                 user_state = self.info.user_state(MAIN_ACCOUNT_ADDRESS)
+
+                # # 💡 追加：APIが返してきた生のデータをログに出力！
+                # log.info(f"🔍 DEBUG HL API: {user_state}")
+
                 current_hedge = 0.0
                 for pos in user_state["assetPositions"]:
                     if pos["position"]["coin"] == "ETH":
@@ -586,7 +591,7 @@ class DeltaNeutralBotV4:
     # ============================================================
     # 総資産計算
     # ============================================================
-    def get_total_equity(self):
+    def get_total_equity(self, cex_price):
         """UniswapとHyperliquidの合計資産価値(USD)を計算"""
         try:
             data = self.get_onchain_data()
@@ -644,10 +649,10 @@ class DeltaNeutralBotV4:
             fees_usdc = uncollected_wei1 / 1e6
             # -----------------------------------
 
-            uni_value_usd = (eth_amount + fees_eth) * data["price"] + (
+            uni_value_usd = (eth_amount + fees_eth) * cex_price + (
                 usdc_amount + fees_usdc
             )
-            funding_fees = fees_eth * data["price"] + fees_usdc
+            funding_fees = fees_eth * cex_price + fees_usdc
 
             if DRY_RUN:
                 # DRY_RUN: 仮想ポジションの含み損益を簡易計算
@@ -659,7 +664,7 @@ class DeltaNeutralBotV4:
             total_equity = uni_value_usd + hl_value_usd
 
             self.ETHthreshold = self.calcThreshold(
-                total_equity=total_equity, currentPrice=data["price"]
+                total_equity=total_equity, currentPrice=cex_price
             )
 
             return {
@@ -1073,7 +1078,7 @@ class DeltaNeutralBotV4:
                     self.BailoutBreachTime = None
 
             # oorDetectorによるレンジアウト判定
-            if oor.runDetector(current_price):
+            if oor.runDetector(cex_price):
                 # プールのりポジションを行う
                 if self._executeReposition(data, pr):
                     repositionCount = 0
@@ -1094,9 +1099,9 @@ class DeltaNeutralBotV4:
             # --- 6. DynamoDB記録 ---
             now = datetime.datetime.now()
             if (now - last_log_time).total_seconds() > RECORD_TIME:
-                equity = self.get_total_equity()
+                equity = self.get_total_equity(cex_price)
                 if equity:
-                    step_pnl, cum_pnl = tracker.update(current_price, raw_net_delta)
+                    step_pnl, cum_pnl = tracker.update(cex_price, raw_net_delta)
                     equity["lp_delta"] = lp_delta_eth
                     equity["net_delta"] = net_delta
                     equity["raw_net_delta"] = raw_net_delta

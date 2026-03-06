@@ -34,7 +34,7 @@ contract Reposition is Script {
     address constant POOL_MANAGER = 0xe54aCE66bD482c5781c9F69f89273586975FFcAC;
     
     // ★ あなたのHookアドレス
-    address constant HOOK_ADDRESS = 0xcBA09533321240F8b8d71549Ecde154A97164080; 
+    address constant HOOK_ADDRESS = 0xF55DD6e6be1acb02E05c24dE345a13f6Efcd0080; 
     
     // ★ 【超重要】前回のログに出力されたルーターアドレスをここに貼ってください
     address constant OLD_ROUTER = 0x264C16Cd53412181c83B518e72d01a57ebfcF2bD; 
@@ -134,12 +134,12 @@ contract Reposition is Script {
         PoolModifyLiquidityTest lpRouter = PoolModifyLiquidityTest(OLD_ROUTER);
 
         // // 本番用
-        // uint256 amount0Desired = IERC20(WETH_ADDRESS).balanceOf(myWallet);
-        // uint256 amount1Desired = IERC20(USDC_ADDRESS).balanceOf(myWallet);
+        uint256 amount0Desired = IERC20(WETH_ADDRESS).balanceOf(myWallet);
+        uint256 amount1Desired = IERC20(USDC_ADDRESS).balanceOf(myWallet);
 
         // テスト用
-        uint256 amount0Desired = 0.001 ether;
-        uint256 amount1Desired = 3 * 10**6;
+        // uint256 amount0Desired = 0.001 ether;
+        // uint256 amount1Desired = 3 * 10**6;
 
         PoolId poolId = key.toId();
         (uint160 actualSqrtPriceX96, , , ) = IPoolManager(POOL_MANAGER).getSlot0(poolId);
