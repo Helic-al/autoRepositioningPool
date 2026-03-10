@@ -34,7 +34,7 @@ contract Reposition is Script {
     address constant POOL_MANAGER = 0xe54aCE66bD482c5781c9F69f89273586975FFcAC;
     
     // ★ あなたのHookアドレス
-    address constant HOOK_ADDRESS = 0xF55DD6e6be1acb02E05c24dE345a13f6Efcd0080; 
+    address constant HOOK_ADDRESS = 0x351d40e706339c7D7588B6F915d62D42510fC080; 
     
     // ★ 【超重要】前回のログに出力されたルーターアドレスをここに貼ってください
     address constant OLD_ROUTER = 0x264C16Cd53412181c83B518e72d01a57ebfcF2bD; 
@@ -55,6 +55,7 @@ contract Reposition is Script {
         int24 newTickLower = int24(vm.envInt("DYNAMIC_NEW_LOWER"));
         int24 newTickUpper= int24(vm.envInt("DYNAMIC_NEW_UPPER"));
         int256 exactLiquidity = vm.envInt("EXACT_LIQUIDITY");
+        bool isLiquidityZero = vm.envUint("IS_LIQUIDITY_ZERO") == 1;
 
         // wallet情報
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
@@ -85,7 +86,10 @@ contract Reposition is Script {
             
         console.log("Withdrawing liquidity...");
 
-        PoolModifyLiquidityTest(OLD_ROUTER).modifyLiquidity(
+        if (isLiquidityZero) {
+            console.log("Current Liquidity is Zero. Skipping withdrawal...");
+        } else {
+            PoolModifyLiquidityTest(OLD_ROUTER).modifyLiquidity(
             key,
             ModifyLiquidityParams({
                 tickLower: oldTickLower,
@@ -94,10 +98,11 @@ contract Reposition is Script {
                 salt: bytes32(0)
             }),
             ""
-        );
+            );
+            console.log("Withdrawal Successful!");
+        }
 
-        console.log("Withdrawal Successful!");
-
+        
         // swap処理
         if (swapAmount < 0) {
             console.log("Executing Adjust Swap on Uniswap V3 ...");

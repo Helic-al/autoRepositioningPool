@@ -2,8 +2,14 @@ import datetime
 import math
 import os
 import subprocess
+from enum import Enum
 
 from logger import setup_logger
+
+
+class isLiquidityZero(Enum):
+    NO = 0
+    YES = 1
 
 
 class PoolRepositioner:
@@ -185,14 +191,17 @@ class PoolRepositioner:
 
         return retOut
 
-    def executeReposition(self, rpcURL, inCurrentPrice):
+    def executeReposition(self, rpcURL, inCurrentPrice, isLiquidityZero):
         """_summary_
-            リポジションを行う関数
+
+        Args:
+            rpcURL (_type_): _description_
+            inCurrentPrice (_type_): _description_
+            isLiquidityZero (bool): isLiquidityZero(Enum).value を受け取る
 
         Returns:
-
+            _type_: _description_
         """
-
         # 新規レンジを計算
         ticks = self.calcNewTick(currentPrice=inCurrentPrice)
         CurrentTick = ticks[0]
@@ -231,6 +240,7 @@ class PoolRepositioner:
         env_vars["SWAP_ZERO_FOR_ONE"] = str(swap_zero_for_one)
         env_vars["SWAP_AMOUNT"] = str(swap_amount)
         env_vars["DYNAMIC_SWAP_MIN_OUT"] = str(expectedOut)
+        env_vars["IS_LIQUIDITY_ZERO"] = str(isLiquidityZero)
 
         command = [
             "forge",

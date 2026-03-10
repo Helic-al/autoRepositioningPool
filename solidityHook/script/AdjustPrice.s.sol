@@ -21,7 +21,7 @@ contract AdjustPrice is Script {
     address constant POOL_MANAGER = 0xe54aCE66bD482c5781c9F69f89273586975FFcAC;
     
     // ★ あなたのHookアドレス
-    address constant HOOK_ADDRESS = 0xcBA09533321240F8b8d71549Ecde154A97164080; 
+    address constant HOOK_ADDRESS = 0xF55DD6e6be1acb02E05c24dE345a13f6Efcd0080; 
     
     address constant WETH_ADDRESS = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
     address constant USDC_ADDRESS = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
@@ -49,7 +49,7 @@ contract AdjustPrice is Script {
         // --------------------------------------------------------
         // ★ 調整量: まずは 1 USDC だけスワップして様子を見る
         // --------------------------------------------------------
-        uint256 swapAmount =  1 * 1e6; // 1 USDC
+        uint256 swapAmount =  5 * 1e6; // 1 USDC
         
         IERC20(USDC_ADDRESS).approve(address(swapRouter), type(uint256).max);
 

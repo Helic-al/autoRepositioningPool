@@ -8,6 +8,7 @@ venv
 .venv/
 bot_log.log
 *.log
+testing.ipynb
 
 # Foundry
 out/

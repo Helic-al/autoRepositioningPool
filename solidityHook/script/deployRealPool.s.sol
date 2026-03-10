@@ -27,7 +27,7 @@ contract DeployRealPool is Script {
     
     // ★ ここには【現在デプロイ済みのあなたのHookアドレス】をそのまま入れてください
     // 20260223 10:53 フック更新
-    address constant HOOK_ADDRESS = 0xF55DD6e6be1acb02E05c24dE345a13f6Efcd0080; 
+    address constant HOOK_ADDRESS = 0x351d40e706339c7D7588B6F915d62D42510fC080; 
 
     address constant WETH_ADDRESS = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
     address constant USDC_ADDRESS = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
@@ -66,19 +66,21 @@ contract DeployRealPool is Script {
             hooks: IHooks(HOOK_ADDRESS)
         });
 
-        // 前回と同じ初期価格
-        uint160 startingPrice = 3534322064189891205398528;
+        // 初期価格
+        uint160 startingPrice = 3578447643907736263983104;
         
+
+        // 注意⚠　流動性追加の場合にはinitializeは行わない
         manager.initialize(key, startingPrice);
         console.log("Dynamic Fee Pool Initialized!");
 
         // 上下約10%の集中流動性レンジを指定
-        int24 tickLower = -200700;
-        int24 tickUpper = -200100;
+        int24 tickLower = -200460;
+        int24 tickUpper = -199860;
 
         // 引き出して戻ってきた資金を再度投入します
-        uint256 amount0Desired = 0.25 ether;
-        uint256 amount1Desired = 500 * 1e6;
+        uint256 amount0Desired = 1.0 ether;
+        uint256 amount1Desired = 2000 * 1e6;
 
         uint128 liquidity = LiquidityAmounts.getLiquidityForAmounts(
             startingPrice,

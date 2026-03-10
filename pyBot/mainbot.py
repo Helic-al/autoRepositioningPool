@@ -33,7 +33,7 @@ from hyperliquid.utils import constants
 from logger import setup_logger
 from lowPassFilter import LowPassFilter
 from oorDetector import oorDetector
-from PoolRepositioner import PoolRepositioner
+from PoolRepositioner import PoolRepositioner, isLiquidityZero
 from v4PoolUtils import poolUtils
 from web3 import Web3
 
@@ -48,7 +48,7 @@ HL_PRIVATE_KEY = os.environ.get("HL_PRIVATE_KEY", "")  # TODO
 MAIN_ACCOUNT_ADDRESS = os.environ.get("ARB_WALLET_ADDRESS")  # TODO
 ARB_SECRET = get_secret_key()
 
-THRESHOLD = 0.080  # 初期リバランス閾値
+THRESHOLD = 0.160  # 初期リバランス閾値
 ALLOWABLE_RISK_PCT = 0.080  # 運用資金から許容するズレ(デルタETH)の割合
 # TARGET_RATIO = 0.5  # しきい値の何割までデルタを打ち消すか
 MAX_RETRY = 3  # 指値注文のリトライ回数
@@ -426,6 +426,34 @@ class DeltaNeutralBotV4:
             log.info(f"HL apiError: {e}")
         return cex_price
 
+    ##################################################################
+    # デバッグ用関数
+    def hltest(self):
+        # 1. 現物（Spot）APIから、純粋なUSDC残高（現金）を取得
+        spot_state = self.info.spot_user_state(MAIN_ACCOUNT_ADDRESS)
+        spot_usdc = 0.0
+        for balance in spot_state.get("balances", []):
+            if balance["coin"] == "USDC":
+                spot_usdc = float(balance["total"])
+                break
+
+        # 2. 先物（Perp）APIから、現在のポジションの「含み損益（Unrealized PnL）」の合計を計算
+        user_state = self.info.user_state(MAIN_ACCOUNT_ADDRESS)
+        unrealized_pnl = 0.0
+        for position in user_state.get("assetPositions", []):
+            pos_data = position.get("position", {})
+            unrealized_pnl += float(pos_data.get("unrealizedPnl", 0.0))
+
+        # 3. 現金残高に含み損益を足して、真の評価額とする
+        hl_value_usd = spot_usdc + unrealized_pnl
+
+        # 🔍 デバッグ用ログ出力
+        log.info(
+            f"💰 HL Total: {hl_value_usd} (Cash: {spot_usdc}, PnL: {unrealized_pnl})"
+        )
+
+        return hl_value_usd
+
     # ============================================================
     # V4: オンチェーンデータ取得
     # ============================================================
@@ -591,12 +619,14 @@ class DeltaNeutralBotV4:
     # ============================================================
     # 総資産計算
     # ============================================================
-    def get_total_equity(self, cex_price):
+    def get_total_equity(self):
         """UniswapとHyperliquidの合計資産価値(USD)を計算"""
         try:
             data = self.get_onchain_data()
             if data is None or data["L"] == 0:
                 return None
+
+            cex_price = self.get_cex_price(data["price"])
 
             eth_amount, usdc_amount = self.get_token_amounts(
                 data["L"], data["sqrtP_raw"], data["tickLower"], data["tickUpper"]
@@ -658,11 +688,77 @@ class DeltaNeutralBotV4:
                 # DRY_RUN: 仮想ポジションの含み損益を簡易計算
                 hl_value_usd = 0.0  # 仮想ポジションの証拠金は追跡しない
             else:
+                spot_state = self.info.spot_user_state(MAIN_ACCOUNT_ADDRESS)
+                spot_usdc = 0.0
+                for balance in spot_state.get("balances", []):
+                    if balance["coin"] == "USDC":
+                        spot_usdc = float(balance["total"])
+                        break
+
+                # 2. 先物（Perp）APIから、現在のポジションの「含み損益（Unrealized PnL）」の合計を計算
                 user_state = self.info.user_state(MAIN_ACCOUNT_ADDRESS)
-                hl_value_usd = float(user_state["marginSummary"]["accountValue"])
+                unrealized_pnl = 0.0
+                for position in user_state.get("assetPositions", []):
+                    pos_data = position.get("position", {})
+                    unrealized_pnl += float(pos_data.get("unrealizedPnl", 0.0))
 
-            total_equity = uni_value_usd + hl_value_usd
+                # 3. 現金残高に含み損益を足して、真の評価額とする
+                hl_value_usd = spot_usdc + unrealized_pnl
 
+                # 🔍 デバッグ用ログ出力
+                log.info(
+                    f"💰 HL Total: {hl_value_usd} (Cash: {spot_usdc}, PnL: {unrealized_pnl})"
+                )
+            # ERC20の残高を取得するための最小限のABI
+            ERC20_ABI = [
+                {
+                    "constant": True,
+                    "inputs": [{"name": "_owner", "type": "address"}],
+                    "name": "balanceOf",
+                    "outputs": [{"name": "balance", "type": "uint256"}],
+                    "type": "function",
+                }
+            ]
+
+            try:
+                # ① 生のETH残高 (ガス代用など / 18 decimals)
+                eth_wei = self.w3.eth.get_balance(MAIN_ACCOUNT_ADDRESS)
+                eth_wallet = eth_wei / (10**18)
+
+                # ② WETH残高 (18 decimals)
+                weth_contract = self.w3.eth.contract(
+                    address=WETH_ADDRESS, abi=ERC20_ABI
+                )
+                weth_wei = weth_contract.functions.balanceOf(
+                    MAIN_ACCOUNT_ADDRESS
+                ).call()
+                weth_wallet = weth_wei / (10**18)
+
+                # ③ USDC残高 (ArbitrumネイティブUSDCは 6 decimals)
+                usdc_contract = self.w3.eth.contract(
+                    address=USDC_ADDRESS, abi=ERC20_ABI
+                )
+                usdc_mwei = usdc_contract.functions.balanceOf(
+                    MAIN_ACCOUNT_ADDRESS
+                ).call()
+                usdc_wallet = usdc_mwei / (10**6)
+
+                # ウォレット内の総資産をUSD換算（ETHとWETHはCEX価格を掛ける）
+                wallet_value_usd = (eth_wallet + weth_wallet) * cex_price + usdc_wallet
+
+            except Exception as e:
+                log.error(f"ウォレット残高の取得に失敗しました: {e}")
+                wallet_value_usd = 0.0
+
+            # ==========================================
+            # 4. 最終的な総資産（Total Equity）の合算
+            # ==========================================
+            total_equity = uni_value_usd + hl_value_usd + wallet_value_usd
+
+            # デバッグ用ログ（3つの内訳を出力）
+            log.info(
+                f"💵 Total Equity: {total_equity:.2f} (Pool: {uni_value_usd:.2f}, HL: {hl_value_usd:.2f}, Wallet: {wallet_value_usd:.2f})"
+            )
             self.ETHthreshold = self.calcThreshold(
                 total_equity=total_equity, currentPrice=cex_price
             )
@@ -879,7 +975,7 @@ class DeltaNeutralBotV4:
             log.info(f"❌ Hook delta-zero error: {e}")
             sendDiscord(f"❌ Hook delta-zero error: {e}")
 
-    def _executeReposition(self, data, pr):
+    def _executeReposition(self, data, pr, inIsLiquidityZero):
         """_summary_
             リポジション実行
         Args:
@@ -888,7 +984,9 @@ class DeltaNeutralBotV4:
         """
         currentCexPrice = self.get_cex_price(data["price"])
         log.info(f"Try repositioning @price:${currentCexPrice}...")
-        PRresponse = pr.executeReposition(INFURA_RPC_URL, currentCexPrice)
+        PRresponse = pr.executeReposition(
+            INFURA_RPC_URL, currentCexPrice, inIsLiquidityZero
+        )
         if PRresponse:
             log.info(f"successfully repositioned @${currentCexPrice}!")
             sendDiscord(f"successfully repositioned @${currentCexPrice}!")
@@ -953,7 +1051,7 @@ class DeltaNeutralBotV4:
             # --- 1. ガード条件: 流動性が0ならポジション作成---
             if data["my_L"] == 0:
                 log.info("pool Liquidity is zero. Making a new Pool position...")
-                if self._executeReposition(data, pr):
+                if self._executeReposition(data, pr, isLiquidityZero.YES.value):
                     repositionCount = 0
                     time.sleep(5)
                     continue
@@ -965,6 +1063,12 @@ class DeltaNeutralBotV4:
                 else:
                     log.info("FAILED to create Position 3 times. Stopping Bot...")
                     exit()
+
+            if pr.liquidity != data["my_L"]:
+                log.info(
+                    f"Liquidity change detected, changing L = {pr.liquidity} to {data['my_L']}"
+                )
+                pr.liquidity = data["my_L"]
 
             # --- 2. デルタ計算 ---
 
@@ -1001,7 +1105,7 @@ class DeltaNeutralBotV4:
                 f"LP:{lp_delta_eth:.3f}ETH (${lp_value_usd:.0f}) | "
                 f"Hedge:{data['hedge_pos']:.3f} | Net:{net_delta:.4f} \n"
                 f"💡 My Exact Liquidity (For Withdraw): {data['my_L']}"
-                f"Total Liquidity: {data['L']}"
+                f" Total Liquidity: {data['L']}"
             )
 
             # --- 3. リバランス判定 (trade_lock で排他制御) ---
@@ -1080,7 +1184,7 @@ class DeltaNeutralBotV4:
             # oorDetectorによるレンジアウト判定
             if oor.runDetector(cex_price):
                 # プールのりポジションを行う
-                if self._executeReposition(data, pr):
+                if self._executeReposition(data, pr, isLiquidityZero.NO.value):
                     repositionCount = 0
                     time.sleep(5)
                     continue
@@ -1111,7 +1215,7 @@ class DeltaNeutralBotV4:
                     self.save_to_dynamodb(equity, data["L"])
                     last_log_time = now
 
-            time.sleep(40)
+            time.sleep(30)
 
 
 if __name__ == "__main__":
