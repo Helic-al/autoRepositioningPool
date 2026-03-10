@@ -1203,7 +1203,7 @@ class DeltaNeutralBotV4:
             # --- 6. DynamoDB記録 ---
             now = datetime.datetime.now()
             if (now - last_log_time).total_seconds() > RECORD_TIME:
-                equity = self.get_total_equity(cex_price)
+                equity = self.get_total_equity()
                 if equity:
                     step_pnl, cum_pnl = tracker.update(cex_price, raw_net_delta)
                     equity["lp_delta"] = lp_delta_eth
