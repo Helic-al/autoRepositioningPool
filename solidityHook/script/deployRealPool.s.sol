@@ -46,7 +46,7 @@ contract DeployRealPool is Script {
         Currency token0 = Currency.wrap(WETH_ADDRESS);
         Currency token1 = Currency.wrap(USDC_ADDRESS);
 
-        IPoolManager manager = IPoolManager(POOL_MANAGER);
+        // IPoolManager manager = IPoolManager(POOL_MANAGER);
         
         // あたらしくルーターアドレスが必要な場合にはnewする、それ以外は古いものを渡す
         // PoolModifyLiquidityTest lpRouter = new PoolModifyLiquidityTest(manager);
@@ -67,16 +67,16 @@ contract DeployRealPool is Script {
         });
 
         // 初期価格
-        uint160 startingPrice = 3578447643907736263983104;
+        uint160 startingPrice = 3559540680042583383080960;
         
 
-        // 注意⚠　流動性追加の場合にはinitializeは行わない
-        manager.initialize(key, startingPrice);
-        console.log("Dynamic Fee Pool Initialized!");
+        // // 注意⚠　流動性追加の場合にはinitializeは行わない
+        // manager.initialize(key, startingPrice);
+        // console.log("Dynamic Fee Pool Initialized!");
 
         // 上下約10%の集中流動性レンジを指定
-        int24 tickLower = -200460;
-        int24 tickUpper = -199860;
+        int24 tickLower = -200400;
+        int24 tickUpper = -200100;
 
         // 引き出して戻ってきた資金を再度投入します
         uint256 amount0Desired = 1.0 ether;

@@ -36,7 +36,7 @@ def calculate_v4_params(price_usdc, range_percent=0.015, tick_spacing=60):
 # ==========================================
 print("Enter the target price(USDC):")
 TARGET_PRICE = float(input())  # 現在のETH価格 (USDC)
-RANGE_PCT = 0.03  # レンジ幅 (0.015 = ±1.5%)
+RANGE_PCT = 0.015  # レンジ幅 (0.015 = ±1.5%)
 
 current, lower, upper, sqrt_p = calculate_v4_params(TARGET_PRICE, RANGE_PCT)
 
